@@ -1,0 +1,6 @@
+run colab before demo and generate grok api key for free to see the project would be uploaded soon
+Link of colab:
+https://colab.research.google.com/drive/1B7Sy1c87VUfrtX-J7-06H0N31pu5fuey?usp=sharing 
+
+link of demo: 
+https://suzi-prerighteous-bellicosely.ngrok-free.dev/ 
