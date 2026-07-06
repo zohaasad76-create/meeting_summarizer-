@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+python-multipart
+aiofiles
+python-dotenv
+
+groq
+
+redis
+
+pydub
+
+sentence-transformers
+scikit-learn
+numpy

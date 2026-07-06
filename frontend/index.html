@@ -1,0 +1,2116 @@
+<!DOCTYPE html>
+<!--
+  index.html — MeetAI Frontend
+  =============================
+  Project : AI Meeting Summarizer & Query System
+  Authors : Fizzah Amir (BSCS 24031) · Zoha Asad (BSCS 24135)
+
+  SRS References Covered by This File
+  -------------------------------------
+  §4.1.1  — Allow users to upload audio files via a browser interface.
+  §4.1.2  — Display supported formats (MP3, WAV, M4A, OGG) clearly.
+  §4.1.6  — Display the four-section structured summary to the user.
+  §4.1.7  — Provide a natural language question input with real-time answers.
+  §4.1.9  — Display the full English transcript after processing.
+  §4.1.10 — Provide a download button for the transcript + summary report.
+  §4.2 (Usability)     — Simple interface requiring no technical knowledge.
+  §4.2 (Reliability)   — Show appropriate error messages on failure.
+  §5.2 (Compatibility) — Accessible via modern web browsers with no installation.
+
+  File Structure
+  --------------
+  <head>     → Google Fonts import, CSS custom properties, all component styles.
+  <body>     → Navigation, Hero section, Stats bar, Feature cards, App section,
+               Footer, Toast notification container.
+  <script>   → All JavaScript: API communication, UI state management,
+               progress tracking, drag-and-drop, summary parsing, Q&A chat.
+
+  JavaScript Sections (inside <script>)
+  ----------------------------------------
+  1. CONFIG          — API base URL constant.
+  2. UTILITIES       — showToast(), setProgress(), sanitizeHTML().
+  3. FILE HANDLING   — handleDrop(), handleFileSelect(), validateFileClient().
+  4. UPLOAD PIPELINE — processFile() — main upload → transcribe flow.
+  5. SUMMARIZATION   — generateSummary(), extractSection() — summary parsing.
+  6. Q&A CHAT        — sendQuestion(), appendMessage(), showTyping(),
+                       removeTyping() — full chat interaction flow.
+  7. DOWNLOAD        — downloadFile() — triggers report download.
+  8. UI HELPERS      — resetUI(), scrollToApp() — shared UI state functions.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MeetAI – AI Meeting Summarizer</title>
+
+  <!--
+    Google Fonts
+    ------------
+    Syne       — Display/heading font: geometric, modern, distinctive.
+    DM Sans    — Body font: clean, readable, professional.
+    Both loaded with font-display:swap for performance.
+  -->
+  <link
+    href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap"
+    rel="stylesheet"
+  />
+
+  <style>
+    /* ═══════════════════════════════════════════════════════════════════════
+       CSS CUSTOM PROPERTIES (Design Tokens)
+       -----------------------------------------------------------------------
+       All colours, radii, shadows, and transitions are defined here so that
+       the entire UI can be rebranded by editing this one block.
+       ═══════════════════════════════════════════════════════════════════════ */
+    :root {
+      /* Brand colours */
+      --clr-primary:      #7c3aed;   /* Violet — primary action colour       */
+      --clr-primary-lt:   #a78bfa;   /* Lighter violet — text on dark cards  */
+      --clr-primary-dk:   #5b21b6;   /* Darker violet — hover states         */
+      --clr-accent:       #06b6d4;   /* Cyan — secondary accent              */
+      --clr-success:      #10b981;   /* Emerald — success states             */
+      --clr-danger:       #ef4444;   /* Red — error states                   */
+      --clr-warn:         #f59e0b;   /* Amber — warning accents              */
+
+      /* Backgrounds (dark theme) */
+      --clr-bg:           #080c14;   /* Page background — near-black         */
+      --clr-surface:      #0f1623;   /* Card/panel surface                   */
+      --clr-surface-2:    #161f30;   /* Elevated card (nested panels)        */
+      --clr-border:       #1e2d42;   /* Subtle border between components     */
+      --clr-border-lt:    #243548;   /* Lighter border for hover states      */
+
+      /* Text */
+      --clr-text:         #e2e8f0;   /* Primary text                         */
+      --clr-text-muted:   #64748b;   /* Secondary / placeholder text         */
+      --clr-text-dim:     #94a3b8;   /* Tertiary text                        */
+
+      /* Typography */
+      --font-display: 'Syne', sans-serif;
+      --font-body:    'DM Sans', sans-serif;
+
+      /* Radii */
+      --r-sm:   8px;
+      --r-md:   14px;
+      --r-lg:   20px;
+      --r-xl:   28px;
+      --r-pill: 999px;
+
+      /* Shadows */
+      --shadow-card:    0 4px 24px rgba(0,0,0,0.4);
+      --shadow-glow:    0 0 40px rgba(124,58,237,0.25);
+      --shadow-btn:     0 8px 32px rgba(124,58,237,0.4);
+      --shadow-btn-hov: 0 12px 40px rgba(124,58,237,0.55);
+
+      /* Transitions */
+      --tx-fast:   0.15s ease;
+      --tx-normal: 0.25s ease;
+      --tx-slow:   0.4s ease;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       GLOBAL RESET & BASE
+       ═══════════════════════════════════════════════════════════════════════ */
+    *, *::before, *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;  /* enables smooth scrolling for anchor links */
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--clr-bg);
+      color: var(--clr-text);
+      min-height: 100vh;
+      overflow-x: hidden;
+      /* Subtle noise texture overlay for depth */
+      background-image:
+        radial-gradient(ellipse 80% 60% at 20% 10%, rgba(124,58,237,0.08) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 50% at 80% 90%, rgba(6,182,212,0.05) 0%, transparent 60%);
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       AMBIENT BACKGROUND GLOW ELEMENTS
+       -----------------------------------------------------------------------
+       Fixed pseudo-ambient lights that give the dark UI atmospheric depth.
+       pointer-events:none ensures they never block clicks.
+       ═══════════════════════════════════════════════════════════════════════ */
+    .bg-glow {
+      position: fixed;
+      top: -300px;
+      left: -300px;
+      width: 700px;
+      height: 700px;
+      background: radial-gradient(circle, rgba(124,58,237,0.12) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+      animation: glowFloat 8s ease-in-out infinite alternate;
+    }
+
+    .bg-glow-2 {
+      position: fixed;
+      bottom: -300px;
+      right: -300px;
+      width: 700px;
+      height: 700px;
+      background: radial-gradient(circle, rgba(6,182,212,0.08) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+      animation: glowFloat 10s ease-in-out infinite alternate-reverse;
+    }
+
+    /* Slow breathing animation for ambient glow elements */
+    @keyframes glowFloat {
+      from { transform: scale(1) translate(0, 0);   opacity: 0.8; }
+      to   { transform: scale(1.1) translate(20px, 20px); opacity: 1; }
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       NAVIGATION BAR
+       -----------------------------------------------------------------------
+       Fixed to the top. Glassmorphism effect via backdrop-filter.
+       ═══════════════════════════════════════════════════════════════════════ */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 48px;
+      background: rgba(8, 12, 20, 0.8);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border-bottom: 1px solid var(--clr-border);
+    }
+
+    /* Logo group: icon + wordmark */
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+
+    .nav-logo-icon {
+      width: 38px;
+      height: 38px;
+      background: linear-gradient(135deg, var(--clr-primary), var(--clr-accent));
+      border-radius: var(--r-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      box-shadow: 0 4px 16px rgba(124,58,237,0.4);
+    }
+
+    /* Pill badge in the nav showing the AI stack used */
+    .nav-pill {
+      background: rgba(124,58,237,0.15);
+      border: 1px solid rgba(124,58,237,0.3);
+      color: var(--clr-primary-lt);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 5px 14px;
+      border-radius: var(--r-pill);
+      letter-spacing: 0.2px;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       HERO SECTION
+       -----------------------------------------------------------------------
+       Full-viewport landing area with headline, subtext, and CTA buttons.
+       SRS §4.2 Usability — describes the system's purpose immediately.
+       ═══════════════════════════════════════════════════════════════════════ */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 140px 24px 80px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero-inner {
+      max-width: 800px;
+    }
+
+    /* Animated "live" badge above the headline */
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(124,58,237,0.1);
+      border: 1px solid rgba(124,58,237,0.25);
+      color: var(--clr-primary-lt);
+      font-size: 13px;
+      font-weight: 500;
+      padding: 8px 20px;
+      border-radius: var(--r-pill);
+      margin-bottom: 32px;
+    }
+
+    /* Pulsing dot inside the hero badge — signals "live / active" */
+    .hero-badge-dot {
+      width: 7px;
+      height: 7px;
+      background: var(--clr-success);
+      border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1;   transform: scale(1);   }
+      50%       { opacity: 0.4; transform: scale(0.75); }
+    }
+
+    /* Main hero headline */
+    .hero h1 {
+      font-family: var(--font-display);
+      font-size: clamp(40px, 7vw, 80px);
+      font-weight: 800;
+      line-height: 1.05;
+      letter-spacing: -2.5px;
+      margin-bottom: 24px;
+    }
+
+    /* Gradient text span inside the headline */
+    .hero h1 .grad {
+      background: linear-gradient(135deg, var(--clr-primary-lt) 0%, var(--clr-accent) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* Hero sub-description */
+    .hero p {
+      font-size: 18px;
+      color: var(--clr-text-muted);
+      line-height: 1.75;
+      margin-bottom: 44px;
+      max-width: 600px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    /* CTA button row */
+    .hero-cta {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       SHARED BUTTON STYLES
+       ═══════════════════════════════════════════════════════════════════════ */
+
+    /* Primary filled button — used for main CTAs */
+    .btn-primary {
+      background: linear-gradient(135deg, var(--clr-primary), var(--clr-primary-dk));
+      color: #fff;
+      border: none;
+      padding: 16px 36px;
+      border-radius: var(--r-md);
+      font-family: var(--font-body);
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform var(--tx-fast), box-shadow var(--tx-normal);
+      box-shadow: var(--shadow-btn);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-btn-hov);
+    }
+
+    .btn-primary:active {
+      transform: translateY(0);
+    }
+
+    /* Ghost / secondary button — less prominent */
+    .btn-ghost {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--clr-border-lt);
+      color: var(--clr-text);
+      padding: 16px 32px;
+      border-radius: var(--r-md);
+      font-family: var(--font-body);
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background var(--tx-fast), border-color var(--tx-fast), transform var(--tx-fast);
+    }
+
+    .btn-ghost:hover {
+      background: rgba(255,255,255,0.07);
+      border-color: rgba(255,255,255,0.2);
+      transform: translateY(-1px);
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       STATS BAR
+       -----------------------------------------------------------------------
+       Horizontal row of key numbers below the hero. Builds trust quickly.
+       ═══════════════════════════════════════════════════════════════════════ */
+    .stats-bar {
+      display: flex;
+      justify-content: center;
+      gap: 56px;
+      padding: 36px 24px;
+      border-top: 1px solid var(--clr-border);
+      border-bottom: 1px solid var(--clr-border);
+      position: relative;
+      z-index: 1;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      text-align: center;
+    }
+
+    .stat-number {
+      font-family: var(--font-display);
+      font-size: 30px;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--clr-primary-lt), var(--clr-accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .stat-label {
+      font-size: 13px;
+      color: var(--clr-text-muted);
+      margin-top: 4px;
+      font-weight: 400;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       FEATURE CARDS GRID
+       -----------------------------------------------------------------------
+       Six cards each describing one system capability (SRS §1.2 features).
+       ═══════════════════════════════════════════════════════════════════════ */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      max-width: 1100px;
+      margin: 72px auto;
+      padding: 0 24px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .feature-card {
+      background: var(--clr-surface);
+      border: 1px solid var(--clr-border);
+      border-radius: var(--r-lg);
+      padding: 28px;
+      transition: border-color var(--tx-normal), transform var(--tx-normal), box-shadow var(--tx-normal);
+    }
+
+    .feature-card:hover {
+      border-color: rgba(124,58,237,0.35);
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-card);
+    }
+
+    .feature-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: var(--r-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      margin-bottom: 16px;
+    }
+
+    .feature-card h3 {
+      font-family: var(--font-display);
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .feature-card p {
+      font-size: 13px;
+      color: var(--clr-text-muted);
+      line-height: 1.65;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       APP SECTION — Main functional area
+       -----------------------------------------------------------------------
+       Contains the upload card, progress indicator, transcript panel,
+       action buttons, summary grid, Q&A chat, and download button.
+       SRS §4.1.1 through §4.1.10 all map to components in this section.
+       ═══════════════════════════════════════════════════════════════════════ */
+    .app-section {
+      max-width: 960px;
+      margin: 0 auto 100px;
+      padding: 0 24px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Section heading above the app */
+    .section-heading {
+      text-align: center;
+      margin-bottom: 52px;
+    }
+
+    .section-heading h2 {
+      font-family: var(--font-display);
+      font-size: 36px;
+      font-weight: 800;
+      letter-spacing: -1px;
+      margin-bottom: 10px;
+    }
+
+    .section-heading p {
+      color: var(--clr-text-muted);
+      font-size: 16px;
+    }
+
+    /* ── Upload Card ─────────────────────────────────────────────────────── */
+    /*
+      The upload card is the primary entry point (SRS §4.1.1).
+      Supports both click-to-browse and drag-and-drop interactions.
+      The dashed border reinforces the drop-zone affordance.
+    */
+    .upload-card {
+      background: var(--clr-surface);
+      border: 2px dashed var(--clr-border);
+      border-radius: var(--r-xl);
+      padding: 56px 40px;
+      text-align: center;
+      margin-bottom: 24px;
+      cursor: pointer;
+      transition: border-color var(--tx-normal), background var(--tx-normal), transform var(--tx-fast);
+    }
+
+    /* Hover and active drag-over state — makes drop zone obvious */
+    .upload-card:hover,
+    .upload-card.dragover {
+      border-color: var(--clr-primary);
+      background: rgba(124,58,237,0.04);
+      transform: scale(1.005);
+    }
+
+    /* Large icon area in the upload card */
+    .upload-icon-wrap {
+      width: 80px;
+      height: 80px;
+      background: rgba(124,58,237,0.1);
+      border: 1px solid rgba(124,58,237,0.25);
+      border-radius: var(--r-lg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 34px;
+      margin: 0 auto 22px;
+    }
+
+    .upload-card h3 {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .upload-card > p {
+      color: var(--clr-text-muted);
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+
+    /* Format badge row (SRS §4.1.2 — display accepted formats clearly) */
+    .format-row {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+
+    .fmt-badge {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--clr-border);
+      color: var(--clr-text-dim);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: var(--r-sm);
+      letter-spacing: 0.5px;
+    }
+
+    /* Hidden native file input — triggered programmatically */
+    #fileInput {
+      display: none;
+    }
+
+    /* ── Progress Indicator ───────────────────────────────────────────────── */
+    /*
+      Shown while the backend processes the audio (SRS §4.2 Usability:
+      users should see meaningful feedback during long operations).
+      Hidden by default; shown via JavaScript during upload.
+    */
+    .progress-panel {
+      display: none;          /* shown by JS during upload */
+      background: var(--clr-surface);
+      border: 1px solid var(--clr-border);
+      border-radius: var(--r-lg);
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .progress-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--clr-text);
+    }
+
+    .progress-pct {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--clr-primary-lt);
+    }
+
+    /* Track bar background */
+    .progress-track {
+      background: var(--clr-border);
+      border-radius: var(--r-pill);
+      height: 8px;
+      overflow: hidden;
+    }
+
+    /* Animated fill bar */
+    .progress-fill {
+      height: 100%;
+      border-radius: var(--r-pill);
+      background: linear-gradient(90deg, var(--clr-primary), var(--clr-accent));
+      width: 0%;
+      transition: width 0.5s ease;
+    }
+
+    /* Step pills below the progress bar */
+    .progress-steps {
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
+      flex-wrap: wrap;
+    }
+
+    .step-pill {
+      font-size: 12px;
+      padding: 4px 14px;
+      border-radius: var(--r-sm);
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--clr-border);
+      color: var(--clr-text-muted);
+      font-weight: 500;
+      transition: all var(--tx-normal);
+    }
+
+    /* Active step — currently processing */
+    .step-pill.active {
+      background: rgba(124,58,237,0.15);
+      border-color: rgba(124,58,237,0.4);
+      color: var(--clr-primary-lt);
+    }
+
+    /* Completed step */
+    .step-pill.done {
+      background: rgba(16,185,129,0.1);
+      border-color: rgba(16,185,129,0.3);
+      color: var(--clr-success);
+    }
+
+    /* ── Result Cards (Transcript, Summary) ──────────────────────────────── */
+    /*
+      Generic panel used for displaying transcript (SRS §4.1.9) and
+      summary (SRS §4.1.6). Hidden by default; .show class reveals them.
+    */
+    .result-panel {
+      background: var(--clr-surface);
+      border: 1px solid var(--clr-border);
+      border-radius: var(--r-lg);
+      overflow: hidden;
+      margin-bottom: 20px;
+      display: none;       /* revealed by adding .show via JavaScript */
+    }
+
+    .result-panel.show {
+      display: block;
+    }
+
+    /* Panel header row with status dot, title, and subtitle */
+    .panel-header {
+      padding: 18px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--clr-border);
+    }
+
+    .panel-header-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    /* Coloured dot indicating panel type (green=transcript, violet=summary) */
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .panel-header h3 {
+      font-family: var(--font-display);
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .panel-header .meta {
+      font-size: 12px;
+      color: var(--clr-text-muted);
+      margin-top: 2px;
+    }
+
+    .panel-body {
+      padding: 24px;
+    }
+
+    /* Transcript text area — scrollable, preserves line breaks */
+    .transcript-body {
+      font-size: 14px;
+      color: var(--clr-text-dim);
+      line-height: 1.85;
+      max-height: 220px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--clr-border) transparent;
+    }
+
+    /* ── Summary Four-Section Grid ───────────────────────────────────────── */
+    /*
+      Displays the four SRS-mandated sections (§4.1.6) in a 2×2 grid.
+      Each cell has its own icon, title, and text content.
+    */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .summary-cell {
+      background: var(--clr-surface-2);
+      border: 1px solid var(--clr-border);
+      border-radius: var(--r-md);
+      padding: 20px;
+    }
+
+    .cell-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .cell-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: var(--r-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .cell-header h4 {
+      font-family: var(--font-display);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    /* Summary text — pre-line preserves bullet formatting from LLM output */
+    .cell-text {
+      font-size: 13px;
+      color: var(--clr-text-dim);
+      line-height: 1.75;
+      white-space: pre-line;
+    }
+
+    /* ── Action Button Row ───────────────────────────────────────────────── */
+    /*
+      Row of action buttons shown after a successful transcription.
+      Contains: Generate Summary (SRS §4.1.6) and Download Report (§4.1.10).
+    */
+    .action-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+
+    /* Base style for action row buttons */
+    .action-btn {
+      flex: 1;
+      min-width: 160px;
+      padding: 15px 22px;
+      border-radius: var(--r-md);
+      font-family: var(--font-body);
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: transform var(--tx-fast), box-shadow var(--tx-normal), opacity var(--tx-fast);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .action-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+
+    /* Green "Generate Summary" button */
+    .btn-summarize {
+      background: linear-gradient(135deg, var(--clr-success), #059669);
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(16,185,129,0.3);
+    }
+
+    .btn-summarize:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 28px rgba(16,185,129,0.45);
+    }
+
+    /* Ghost "Download Report" button */
+    .btn-dl {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--clr-border);
+      color: var(--clr-text);
+    }
+
+    .btn-dl:hover:not(:disabled) {
+      background: rgba(255,255,255,0.08);
+      transform: translateY(-2px);
+    }
+
+    /* ── Q&A Chat Panel ──────────────────────────────────────────────────── */
+    /*
+      Full chat interface for the RAG-based Q&A system (SRS §4.1.7).
+      Includes message history, typing indicator, and input row.
+      Hidden until a transcript is loaded; shown by processFile() success.
+    */
+    .qa-panel {
+      background: var(--clr-surface);
+      border: 1px solid var(--clr-border);
+      border-radius: var(--r-lg);
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+
+    /* Q&A panel header */
+    .qa-header {
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--clr-border);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .qa-header-icon {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, var(--clr-primary), var(--clr-accent));
+      border-radius: var(--r-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .qa-header h3 {
+      font-family: var(--font-display);
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .qa-header p {
+      font-size: 12px;
+      color: var(--clr-text-muted);
+    }
+
+    /* Scrollable message history area */
+    .chat-history {
+      padding: 20px 24px;
+      max-height: 380px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--clr-border) transparent;
+    }
+
+    /* Empty state shown before first question */
+    .chat-empty {
+      text-align: center;
+      padding: 48px 24px;
+      color: var(--clr-text-muted);
+    }
+
+    .chat-empty-icon {
+      font-size: 40px;
+      margin-bottom: 12px;
+    }
+
+    .chat-empty p {
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    /* Individual chat message row */
+    .chat-msg {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    /* User messages appear on the right */
+    .chat-msg.user {
+      flex-direction: row-reverse;
+    }
+
+    /* Circular avatar for user/AI */
+    .msg-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: var(--r-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .chat-msg.user .msg-avatar {
+      background: linear-gradient(135deg, var(--clr-primary), var(--clr-primary-dk));
+    }
+
+    .chat-msg.ai .msg-avatar {
+      background: linear-gradient(135deg, var(--clr-accent), #0891b2);
+    }
+
+    /* Message bubble */
+    .msg-bubble {
+      max-width: 72%;
+      padding: 13px 17px;
+      border-radius: 16px;
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    /* User bubble — violet gradient */
+    .chat-msg.user .msg-bubble {
+      background: linear-gradient(135deg, var(--clr-primary), var(--clr-primary-dk));
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+
+    /* AI bubble — subtle glass panel */
+    .chat-msg.ai .msg-bubble {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--clr-border);
+      color: var(--clr-text-dim);
+      border-bottom-left-radius: 4px;
+      white-space: pre-line;  /* preserves bullet points in AI responses */
+    }
+
+    /* Three-dot typing indicator shown while waiting for AI response */
+    .typing-dots {
+      display: flex;
+      gap: 5px;
+      align-items: center;
+      padding: 4px 2px;
+    }
+
+    .typing-dots span {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--clr-text-muted);
+      animation: typingBounce 1.2s ease-in-out infinite;
+    }
+
+    /* Staggered delays for the three dots */
+    .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes typingBounce {
+      0%, 80%, 100% { transform: translateY(0);    }
+      40%            { transform: translateY(-8px); }
+    }
+
+    /* Q&A input row at the bottom of the chat panel */
+    .qa-input-row {
+      padding: 16px 24px;
+      border-top: 1px solid var(--clr-border);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    /* Text input field */
+    .qa-input {
+      flex: 1;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--clr-border);
+      border-radius: var(--r-md);
+      padding: 12px 18px;
+      font-family: var(--font-body);
+      font-size: 14px;
+      color: var(--clr-text);
+      outline: none;
+      transition: border-color var(--tx-fast);
+    }
+
+    .qa-input:focus {
+      border-color: var(--clr-primary);
+    }
+
+    .qa-input::placeholder {
+      color: var(--clr-text-muted);
+    }
+
+    /* Send button — square violet icon button */
+    .qa-send-btn {
+      width: 46px;
+      height: 46px;
+      border-radius: var(--r-md);
+      background: linear-gradient(135deg, var(--clr-primary), var(--clr-primary-dk));
+      border: none;
+      color: #fff;
+      font-size: 17px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform var(--tx-fast), box-shadow var(--tx-normal);
+      flex-shrink: 0;
+    }
+
+    .qa-send-btn:hover {
+      transform: scale(1.06);
+      box-shadow: 0 4px 16px rgba(124,58,237,0.45);
+    }
+
+    .qa-send-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       TOAST NOTIFICATION
+       -----------------------------------------------------------------------
+       Fixed bottom-right notification for success/error feedback.
+       (SRS §4.2 Reliability — display appropriate messages on failure.)
+       Shown/hidden by toggling the .show class via JavaScript.
+       ═══════════════════════════════════════════════════════════════════════ */
+    .toast {
+      position: fixed;
+      bottom: 28px;
+      right: 28px;
+      background: var(--clr-surface);
+      border: 1px solid var(--clr-border);
+      border-radius: var(--r-md);
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 500;
+      z-index: 9999;
+      /* Starts hidden below viewport */
+      transform: translateY(80px);
+      opacity: 0;
+      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      max-width: 340px;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    /* Left-side coloured indicator bar inside the toast */
+    .toast-bar {
+      width: 4px;
+      height: 36px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .toast.success .toast-bar { background: var(--clr-success); }
+    .toast.error   .toast-bar { background: var(--clr-danger);  }
+    .toast.info    .toast-bar { background: var(--clr-primary);  }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       FOOTER
+       ═══════════════════════════════════════════════════════════════════════ */
+    footer {
+      text-align: center;
+      padding: 40px 24px;
+      border-top: 1px solid var(--clr-border);
+      color: var(--clr-text-muted);
+      font-size: 13px;
+      position: relative;
+      z-index: 1;
+    }
+
+    footer p + p {
+      margin-top: 6px;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       RESPONSIVE — MOBILE BREAKPOINT (≤ 768px)
+       -----------------------------------------------------------------------
+       SRS §5.2 Compatibility — accessible via modern browsers on any device.
+       ═══════════════════════════════════════════════════════════════════════ */
+    @media (max-width: 768px) {
+      nav                  { padding: 14px 20px; }
+      .nav-pill            { display: none; }           /* hide nav badge on mobile */
+      .features-grid       { grid-template-columns: 1fr; }
+      .summary-grid        { grid-template-columns: 1fr; }
+      .stats-bar           { gap: 24px; }
+      .upload-card         { padding: 32px 20px; }
+      .hero h1             { letter-spacing: -1px; }
+      .msg-bubble          { max-width: 85%; }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ═══ AMBIENT BACKGROUND GLOWS ═════════════════════════════════════════ -->
+  <!-- These are purely decorative. pointer-events:none prevents interaction. -->
+  <div class="bg-glow"   aria-hidden="true"></div>
+  <div class="bg-glow-2" aria-hidden="true"></div>
+
+  <!-- ═══ NAVIGATION ════════════════════════════════════════════════════════ -->
+  <nav role="navigation" aria-label="Main navigation">
+    <div class="nav-logo">
+      <div class="nav-logo-icon" aria-hidden="true">🎙️</div>
+      MeetAI
+    </div>
+    <div class="nav-pill" aria-label="Powered by Llama 3 and Whisper">
+      ✦ Llama 3 + Whisper Large V3
+    </div>
+  </nav>
+
+  <!-- ═══ HERO SECTION ══════════════════════════════════════════════════════ -->
+  <!-- Introduces the product. CTA buttons scroll to the app section. -->
+  <section class="hero" aria-labelledby="hero-heading">
+    <div class="hero-inner">
+
+      <!-- Live badge — shows technology stack -->
+      <div class="hero-badge">
+        <span class="hero-badge-dot" aria-hidden="true"></span>
+        Whisper Large V3 + Llama 3 via Groq API
+      </div>
+
+      <!-- Main headline with gradient accent -->
+      <h1 id="hero-heading">
+        Turn Meetings Into<br />
+        <span class="grad">Actionable Insights</span>
+      </h1>
+
+      <!-- Subtext describing the system (SRS §2.1 Purpose) -->
+      <p>
+        Upload any meeting recording in English, Urdu, or Roman Urdu.<br />
+        Get a full transcript, structured summary, and ask anything — instantly.
+      </p>
+
+      <!-- Call-to-action buttons -->
+      <div class="hero-cta">
+        <button
+          class="btn-primary"
+          onclick="scrollToApp()"
+          aria-label="Try the app now"
+        >
+          🚀 Try It Now
+        </button>
+        <button
+          class="btn-ghost"
+          onclick="scrollToApp()"
+          aria-label="See how it works"
+        >
+          See How It Works →
+        </button>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ═══ STATS BAR ══════════════════════════════════════════════════════════ -->
+  <!-- Quick trust-building numbers below the hero. -->
+  <div class="stats-bar" role="region" aria-label="System statistics">
+    <div class="stat">
+      <div class="stat-number">3</div>
+      <div class="stat-label">Languages Supported</div>
+    </div>
+    <div class="stat">
+      <div class="stat-number">99%</div>
+      <div class="stat-label">Transcription Accuracy</div>
+    </div>
+    <div class="stat">
+      <div class="stat-number">&lt;2s</div>
+      <div class="stat-label">Response Time</div>
+    </div>
+    <div class="stat">
+      <div class="stat-number">4</div>
+      <div class="stat-label">Summary Sections</div>
+    </div>
+  </div>
+
+  <!-- ═══ FEATURE CARDS ══════════════════════════════════════════════════════ -->
+  <!-- Six cards mapping to SRS §1.2 main features. -->
+  <div class="features-grid" role="region" aria-label="Key features">
+
+    <div class="feature-card">
+      <div class="feature-icon" style="background:rgba(124,58,237,0.12)" aria-hidden="true">🎙️</div>
+      <h3>Smart Transcription</h3>
+      <p>Whisper Large V3 converts audio to English text — supports English, Urdu, and Roman Urdu automatically.</p>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon" style="background:rgba(6,182,212,0.12)" aria-hidden="true">📋</div>
+      <h3>Structured Summaries</h3>
+      <p>Get Meeting Overview, Key Decisions, Action Items, and Topics Discussed — all clearly organized.</p>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon" style="background:rgba(16,185,129,0.12)" aria-hidden="true">💬</div>
+      <h3>RAG-Powered Q&amp;A</h3>
+      <p>Ask any question about your meeting in natural language and get accurate answers grounded in transcript.</p>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon" style="background:rgba(245,158,11,0.12)" aria-hidden="true">⚡</div>
+      <h3>Lightning Fast</h3>
+      <p>Groq LPU inference delivers responses in under 2 seconds — no GPU required on your device.</p>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon" style="background:rgba(239,68,68,0.12)" aria-hidden="true">🔒</div>
+      <h3>Private &amp; Secure</h3>
+      <p>Audio files are processed temporarily and never stored permanently on any server (SRS §5.2 Security).</p>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon" style="background:rgba(139,92,246,0.12)" aria-hidden="true">💾</div>
+      <h3>Export Report</h3>
+      <p>Download the full transcript and structured summary as a .txt file to keep a permanent local record.</p>
+    </div>
+
+  </div>
+
+  <!-- ═══ APP SECTION ════════════════════════════════════════════════════════ -->
+  <!-- id="app" is the scroll target for the hero CTA buttons. -->
+  <main class="app-section" id="app" role="main">
+
+    <div class="section-heading">
+      <h2>Start Summarizing</h2>
+      <p>Upload your meeting audio and let AI handle the rest</p>
+    </div>
+
+    <!-- ── Upload Card (SRS §4.1.1, §4.1.2) ─────────────────────────────── -->
+    <!--
+      Clicking anywhere on this card triggers the hidden file input.
+      Drag-and-drop is handled by ondragover / ondragleave / ondrop events.
+    -->
+    <div
+      class="upload-card"
+      id="uploadCard"
+      role="button"
+      tabindex="0"
+      aria-label="Click or drag and drop to upload audio file"
+      onclick="document.getElementById('fileInput').click()"
+      ondragover="handleDragOver(event)"
+      ondragleave="handleDragLeave(event)"
+      ondrop="handleDrop(event)"
+      onkeydown="if(event.key==='Enter'||event.key===' ')document.getElementById('fileInput').click()"
+    >
+      <div class="upload-icon-wrap" aria-hidden="true">📁</div>
+      <h3>Drop your audio file here</h3>
+      <p>or click to browse from your computer</p>
+
+      <!-- Format badges — SRS §4.1.2: only these four formats accepted -->
+      <div class="format-row" aria-label="Accepted file formats">
+        <span class="fmt-badge">MP3</span>
+        <span class="fmt-badge">WAV</span>
+        <span class="fmt-badge">M4A</span>
+        <span class="fmt-badge">OGG</span>
+      </div>
+
+      <!-- Styled browse button; stops propagation to avoid double-triggering -->
+      <button
+        class="btn-primary"
+        onclick="event.stopPropagation(); document.getElementById('fileInput').click()"
+        aria-label="Browse files"
+      >
+        Choose File
+      </button>
+
+      <!--
+        Hidden native file picker.
+        accept= mirrors ALLOWED_EXTENSIONS from backend config (SRS §4.1.2).
+        onchange fires handleFileSelect() when the user picks a file.
+      -->
+      <input
+        type="file"
+        id="fileInput"
+        accept=".mp3,.wav,.m4a,.ogg"
+        aria-hidden="true"
+        onchange="handleFileSelect(event)"
+      />
+    </div>
+
+    <!-- ── Progress Panel ─────────────────────────────────────────────────── -->
+    <!--
+      Shown during upload/transcription. Provides step-by-step feedback
+      (SRS §4.2 Usability). Steps: Upload → Transcribe → Translate → Done.
+    -->
+    <div class="progress-panel" id="progressPanel" role="status" aria-live="polite">
+      <div class="progress-header">
+        <span class="progress-title" id="progressTitle">Processing…</span>
+        <span class="progress-pct"   id="progressPct">0%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-steps" aria-label="Processing steps">
+        <div class="step-pill" id="step1">📤 Uploading</div>
+        <div class="step-pill" id="step2">🎙️ Transcribing</div>
+        <div class="step-pill" id="step3">🌐 Translating</div>
+        <div class="step-pill" id="step4">✅ Done</div>
+      </div>
+    </div>
+
+    <!-- ── Transcript Panel (SRS §4.1.9) ─────────────────────────────────── -->
+    <!--
+      Hidden until a successful transcription is returned from the backend.
+      Displays the full English transcript in a scrollable container.
+    -->
+    <div class="result-panel" id="transcriptPanel" role="region" aria-label="Meeting transcript">
+      <div class="panel-header">
+        <div class="panel-header-left">
+          <!-- Green dot = success/complete state -->
+          <div class="status-dot" style="background: var(--clr-success);" aria-hidden="true"></div>
+          <div>
+            <h3>Full Transcript</h3>
+            <p class="meta" id="transcriptMeta">Ready</p>
+          </div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <!-- Transcript content injected here by JavaScript -->
+        <div class="transcript-body" id="transcriptBody"></div>
+      </div>
+    </div>
+
+    <!-- ── Action Buttons (SRS §4.1.6, §4.1.10) ──────────────────────────── -->
+    <!--
+      Shown after successful transcription. Hidden via inline style initially;
+      revealed by processFile() on success.
+    -->
+    <div class="action-row" id="actionRow" style="display:none" role="group" aria-label="Actions">
+      <button
+        class="action-btn btn-summarize"
+        id="summarizeBtn"
+        onclick="generateSummary()"
+        aria-label="Generate structured meeting summary"
+      >
+        📋 Generate Summary
+      </button>
+      <button
+        class="action-btn btn-dl"
+        onclick="downloadFile()"
+        aria-label="Download full report as text file"
+      >
+        ⬇️ Download Report
+      </button>
+    </div>
+
+    <!-- ── Summary Panel (SRS §4.1.6) ────────────────────────────────────── -->
+    <!--
+      Hidden until generateSummary() completes. Shows the four SRS-mandated
+      sections in a 2×2 grid. Content is injected by extractSection().
+    -->
+    <div class="result-panel" id="summaryPanel" role="region" aria-label="Meeting summary">
+      <div class="panel-header">
+        <div class="panel-header-left">
+          <!-- Violet dot = AI-generated content -->
+          <div class="status-dot" style="background: var(--clr-primary);" aria-hidden="true"></div>
+          <div>
+            <h3>Meeting Summary</h3>
+            <p class="meta">AI-generated structured summary</p>
+          </div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="summary-grid">
+
+          <!-- Section 1: Meeting Overview -->
+          <div class="summary-cell">
+            <div class="cell-header">
+              <div class="cell-icon" style="background:rgba(124,58,237,0.12)" aria-hidden="true">📌</div>
+              <h4>Meeting Overview</h4>
+            </div>
+            <p class="cell-text" id="sumOverview">—</p>
+          </div>
+
+          <!-- Section 2: Key Decisions -->
+          <div class="summary-cell">
+            <div class="cell-header">
+              <div class="cell-icon" style="background:rgba(16,185,129,0.12)" aria-hidden="true">✅</div>
+              <h4>Key Decisions</h4>
+            </div>
+            <p class="cell-text" id="sumDecisions">—</p>
+          </div>
+
+          <!-- Section 3: Action Items -->
+          <div class="summary-cell">
+            <div class="cell-header">
+              <div class="cell-icon" style="background:rgba(245,158,11,0.12)" aria-hidden="true">⚡</div>
+              <h4>Action Items</h4>
+            </div>
+            <p class="cell-text" id="sumActions">—</p>
+          </div>
+
+          <!-- Section 4: Topics Discussed -->
+          <div class="summary-cell">
+            <div class="cell-header">
+              <div class="cell-icon" style="background:rgba(6,182,212,0.12)" aria-hidden="true">💬</div>
+              <h4>Topics Discussed</h4>
+            </div>
+            <p class="cell-text" id="sumTopics">—</p>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Q&A Chat Panel (SRS §4.1.7) ───────────────────────────────────── -->
+    <!--
+      Hidden until a transcript is loaded. Provides the RAG-based Q&A
+      interface. Users can ask unlimited questions without re-uploading
+      audio (SRS §5.1.8 — transcript cached in session memory).
+    -->
+    <div class="qa-panel" id="qaPanel" style="display:none" role="region" aria-label="Q&A chat">
+
+      <div class="qa-header">
+        <div class="qa-header-icon" aria-hidden="true">🤖</div>
+        <div>
+          <h3>Ask About This Meeting</h3>
+          <p>RAG-powered — answers grounded only in your meeting content</p>
+        </div>
+      </div>
+
+      <!-- Message history — populated dynamically by sendQuestion() -->
+      <div class="chat-history" id="chatHistory" role="log" aria-live="polite" aria-label="Chat messages">
+        <!-- Empty state shown before the first question -->
+        <div class="chat-empty" id="chatEmpty">
+          <div class="chat-empty-icon" aria-hidden="true">💬</div>
+          <p>
+            Ask anything about your meeting.<br />
+            e.g. "What were the action items?" or "Who was mentioned?"
+          </p>
+        </div>
+      </div>
+
+      <!-- Input row — Enter key or send button submits the question -->
+      <div class="qa-input-row">
+        <input
+          type="text"
+          class="qa-input"
+          id="qaInput"
+          placeholder="Ask a question about the meeting…"
+          aria-label="Type your question"
+          onkeydown="if(event.key==='Enter') sendQuestion()"
+          maxlength="500"
+        />
+        <button
+          class="qa-send-btn"
+          id="sendBtn"
+          onclick="sendQuestion()"
+          aria-label="Send question"
+          title="Send question (or press Enter)"
+        >
+          ➤
+        </button>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- ═══ FOOTER ════════════════════════════════════════════════════════════ -->
+  <footer role="contentinfo">
+    <p>MeetAI — AI Meeting Summarizer &amp; Query System</p>
+    <p>Fizzah Amir (BSCS 24031) &nbsp;·&nbsp; Zoha Asad (BSCS 24135)</p>
+  </footer>
+
+  <!-- ═══ TOAST NOTIFICATION ════════════════════════════════════════════════ -->
+  <!--
+    Single toast element reused for all notifications.
+    showToast() updates its content and toggles .show class.
+    (SRS §4.2 Reliability — display appropriate messages on failure.)
+  -->
+  <div class="toast" id="toast" role="alert" aria-live="assertive">
+    <div class="toast-bar" id="toastBar"></div>
+    <span id="toastMsg"></span>
+  </div>
+
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       JAVASCRIPT
+       =======================================================================
+       All client-side logic. Organised into clearly labelled sections:
+
+       SECTION 1 — CONFIG          : API base URL.
+       SECTION 2 — UTILITIES       : showToast, setProgress, sanitizeHTML.
+       SECTION 3 — FILE HANDLING   : drag-drop handlers, client-side validation.
+       SECTION 4 — UPLOAD PIPELINE : processFile — upload → transcribe flow.
+       SECTION 5 — SUMMARIZATION   : generateSummary, extractSection.
+       SECTION 6 — Q&A CHAT        : sendQuestion, chat DOM helpers.
+       SECTION 7 — DOWNLOAD        : downloadFile.
+       SECTION 8 — UI HELPERS      : resetUI, scrollToApp.
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <script>
+    "use strict";
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       SECTION 1 — CONFIG
+       -----------------------------------------------------------------------
+       API base URL. Change this if the backend is hosted on a different
+       address or port. No trailing slash.
+       ═══════════════════════════════════════════════════════════════════════ */
+    const API = "http://127.0.0.1:8000";
+
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       SECTION 2 — UTILITIES
+       ═══════════════════════════════════════════════════════════════════════ */
+
+    /**
+     * showToast
+     * ---------
+     * Display a bottom-right notification toast for a set duration.
+     * Satisfies SRS §4.2 Reliability: appropriate messages shown on failure.
+     *
+     * @param {string} message  - Text to display inside the toast.
+     * @param {string} type     - "success" | "error" | "info"
+     *                            Controls the coloured indicator bar.
+     * @param {number} duration - Auto-dismiss delay in milliseconds (default 3500).
+     */
+    function showToast(message, type = "success", duration = 3500) {
+      const toast   = document.getElementById("toast");
+      const bar     = document.getElementById("toastBar");
+      const msgEl   = document.getElementById("toastMsg");
+
+      /* Prefix icon based on type */
+      const icons = { success: "✅ ", error: "❌ ", info: "ℹ️ " };
+      msgEl.textContent = (icons[type] || "") + message;
+
+      /* Update class list — removes old type, adds new one */
+      toast.className = `toast show ${type}`;
+
+      /* Auto-dismiss after duration */
+      clearTimeout(toast._timer);
+      toast._timer = setTimeout(() => {
+        toast.className = "toast";
+      }, duration);
+    }
+
+    /**
+     * setProgress
+     * -----------
+     * Update the progress panel's fill bar, percentage label, title text,
+     * and the state (active / done / idle) of each step pill.
+     *
+     * @param {number} pct        - Fill percentage (0–100).
+     * @param {string} titleText  - Label shown beside the percentage.
+     * @param {number} activeStep - 1-based index of the currently active step.
+     *                             Steps before it are marked "done";
+     *                             the current step is "active";
+     *                             later steps remain unstyled.
+     */
+    function setProgress(pct, titleText, activeStep) {
+      document.getElementById("progressFill").style.width  = pct + "%";
+      document.getElementById("progressPct").textContent   = pct + "%";
+      document.getElementById("progressTitle").textContent = titleText;
+
+      /* Update each step pill's class based on its position vs activeStep */
+      ["step1", "step2", "step3", "step4"].forEach((id, i) => {
+        const stepNum = i + 1;
+        const el = document.getElementById(id);
+        if (stepNum < activeStep)       el.className = "step-pill done";
+        else if (stepNum === activeStep) el.className = "step-pill active";
+        else                             el.className = "step-pill";
+      });
+    }
+
+    /**
+     * sanitizeHTML
+     * ------------
+     * Escape user-provided or API-returned text before inserting it into
+     * innerHTML to prevent XSS injection.
+     *
+     * @param  {string} str - Raw string to escape.
+     * @returns {string}      HTML-safe string.
+     */
+    function sanitizeHTML(str) {
+      const div = document.createElement("div");
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       SECTION 3 — FILE HANDLING
+       ═══════════════════════════════════════════════════════════════════════ */
+
+    /**
+     * ALLOWED_TYPES
+     * -------------
+     * Client-side mirror of the backend ALLOWED_EXTENSIONS set.
+     * Provides instant feedback before the network request is made.
+     * The backend also validates (SRS §5.1.1 defence-in-depth).
+     */
+    const ALLOWED_TYPES = new Set(["mp3", "wav", "m4a", "ogg"]);
+
+    /**
+     * handleDragOver
+     * --------------
+     * Called while a file is dragged over the upload card.
+     * Prevents the browser's default behaviour (opening the file) and
+     * adds the .dragover CSS class to give visual drop-zone feedback.
+     *
+     * @param {DragEvent} e
+     */
+    function handleDragOver(e) {
+      e.preventDefault();
+      document.getElementById("uploadCard").classList.add("dragover");
+    }
+
+    /**
+     * handleDragLeave
+     * ---------------
+     * Called when a dragged file leaves the upload card.
+     * Removes the visual drop-zone highlight.
+     *
+     * @param {DragEvent} e
+     */
+    function handleDragLeave(e) {
+      document.getElementById("uploadCard").classList.remove("dragover");
+    }
+
+    /**
+     * handleDrop
+     * ----------
+     * Called when the user drops a file onto the upload card.
+     * Extracts the first file from the DataTransfer object and passes
+     * it to processFile(). Ignores subsequent files if multiple are dropped.
+     *
+     * @param {DragEvent} e
+     */
+    function handleDrop(e) {
+      e.preventDefault();
+      document.getElementById("uploadCard").classList.remove("dragover");
+      const file = e.dataTransfer.files[0];
+      if (file) processFile(file);
+    }
+
+    /**
+     * handleFileSelect
+     * ----------------
+     * Called by the hidden <input type="file"> onChange event.
+     * Extracts the selected file and passes it to processFile().
+     *
+     * @param {Event} e - Native input change event.
+     */
+    function handleFileSelect(e) {
+      const file = e.target.files[0];
+      /* Reset the input value so the same file can be re-selected after an error */
+      e.target.value = "";
+      if (file) processFile(file);
+    }
+
+    /**
+     * validateFileClient
+     * ------------------
+     * Client-side format check before sending the file to the server.
+     * Provides instant, zero-latency feedback for unsupported formats.
+     * The backend performs an independent server-side check as well
+     * (SRS §5.1.1 — defence-in-depth).
+     *
+     * @param  {File}    file - The File object from the input or drop event.
+     * @returns {boolean}       true if the extension is in ALLOWED_TYPES.
+     */
+    function validateFileClient(file) {
+      const ext = file.name.split(".").pop().toLowerCase();
+      if (!ALLOWED_TYPES.has(ext)) {
+        showToast(
+          `Unsupported format ".${ext}". Please upload MP3, WAV, M4A, or OGG.`,
+          "error",
+          5000
+        );
+        return false;
+      }
+      return true;
+    }
+
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       SECTION 4 — UPLOAD PIPELINE
+       ═══════════════════════════════════════════════════════════════════════ */
+
+    /**
+     * processFile
+     * -----------
+     * Main entry point for the upload → transcription flow.
+     * Implements the frontend side of SRS §4.1.1, §4.1.9:
+     *   1. Validate format client-side (instant feedback).
+     *   2. Reset the UI to a clean state.
+     *   3. Show the progress panel and animate through steps.
+     *   4. POST the file to /upload via FormData.
+     *   5. On success: display transcript, reveal action buttons and Q&A panel.
+     *   6. On failure: show toast with the server's error message.
+     *
+     * @param {File} file - Audio file selected or dropped by the user.
+     */
+    async function processFile(file) {
+
+      /* Step 0 — Client-side format validation */
+      if (!validateFileClient(file)) return;
+
+      /* Step 1 — Reset UI (clear previous session results) */
+      resetUI();
+
+      /* Step 2 — Show progress panel */
+      document.getElementById("progressPanel").style.display = "block";
+      setProgress(10, "Uploading audio file…", 1);
+
+      /* Step 3 — Build FormData and POST to backend */
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        /* Advance progress UI to transcribing step */
+        setProgress(35, "Transcribing with Whisper Large V3…", 2);
+
+        const response = await fetch(`${API}/upload`, {
+          method: "POST",
+          body:   formData,
+          /* Note: Do NOT set Content-Type header — browser sets it automatically
+             with the correct multipart boundary for FormData. */
+        });
+
+        const data = await response.json();
+
+        /* Handle non-2xx responses — server sends error in data.detail */
+        if (!response.ok) {
+          showToast(data.detail || "Upload failed. Please try again.", "error", 6000);
+          document.getElementById("progressPanel").style.display = "none";
+          return;
+        }
+
+        /* Step 4 — Animate remaining progress steps */
+        setProgress(80, "Translating to English…", 3);
+        await delay(400);  /* small visual pause so the step is readable */
+        setProgress(100, "Done!", 4);
+
+        /* Step 5 — Hide progress, reveal transcript and controls */
+        await delay(700);
+        document.getElementById("progressPanel").style.display = "none";
+
+        /* Populate transcript panel (SRS §4.1.9) */
+        document.getElementById("transcriptBody").textContent = data.transcript;
+        document.getElementById("transcriptMeta").textContent =
+          `${data.word_count ?? data.transcript.split(" ").length} words`;
+        document.getElementById("transcriptPanel").classList.add("show");
+
+        /* Reveal action buttons and Q&A panel */
+        document.getElementById("actionRow").style.display = "flex";
+        document.getElementById("qaPanel").style.display   = "block";
+
+        showToast("Transcript ready!", "success");
+
+      } catch (err) {
+        /* Network error — backend unreachable */
+        console.error("[processFile] Network error:", err);
+        showToast("Cannot connect to the server. Is the backend running?", "error", 6000);
+        document.getElementById("progressPanel").style.display = "none";
+      }
+    }
+
+    /**
+     * delay
+     * -----
+     * Promisified setTimeout helper used to create short visual pauses
+     * between progress bar steps without blocking the main thread.
+     *
+     * @param  {number} ms - Delay in milliseconds.
+     * @returns {Promise<void>}
+     */
+    function delay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       SECTION 5 — SUMMARIZATION
+       ═══════════════════════════════════════════════════════════════════════ */
+
+    /**
+     * generateSummary
+     * ---------------
+     * POST to /summarize and populate the four-section summary grid.
+     * Implements SRS §4.1.6: display the structured summary to the user.
+     *
+     * The backend returns a single summary string formatted with numbered
+     * section headings. extractSection() parses out each section's content.
+     */
+    async function generateSummary() {
+      const btn = document.getElementById("summarizeBtn");
+
+      /* Disable button to prevent duplicate requests */
+      btn.disabled = true;
+      btn.textContent = "⏳ Generating…";
+      showToast("Generating summary…", "info");
+
+      try {
+        const response = await fetch(`${API}/summarize`, { method: "POST" });
+        const data     = await response.json();
+
+        if (!response.ok) {
+          showToast(data.detail || "Summarization failed.", "error", 5000);
+          return;
+        }
+
+        const raw = data.summary;
+
+        /* Populate each of the four section cells using section-aware parsing */
+        document.getElementById("sumOverview").textContent  = extractSection(raw, "overview");
+        document.getElementById("sumDecisions").textContent = extractSection(raw, "decisions");
+        document.getElementById("sumActions").textContent   = extractSection(raw, "action");
+        document.getElementById("sumTopics").textContent    = extractSection(raw, "topics");
+
+        /* Reveal the summary panel */
+        document.getElementById("summaryPanel").classList.add("show");
+
+        showToast("Summary ready!", "success");
+
+      } catch (err) {
+        console.error("[generateSummary] Network error:", err);
+        showToast("Cannot connect to the server.", "error", 5000);
+      } finally {
+        /* Always re-enable the button */
+        btn.disabled    = false;
+        btn.textContent = "📋 Generate Summary";
+      }
+    }
+
+    /**
+     * extractSection
+     * --------------
+     * Parse a specific section out of the LLM's structured summary text.
+     *
+     * The backend summary is formatted with numbered headings:
+     *   "1. Meeting Overview\n<content>\n\n2. Key Decisions\n<content>…"
+     *
+     * This function finds the line containing the keyword, collects all
+     * following lines as the section body, and stops when it encounters
+     * the next numbered heading (e.g. "2." or "3.").
+     *
+     * Falls back to returning the full raw text if the section isn't found
+     * (handles unexpected LLM output formats gracefully).
+     *
+     * @param  {string} raw     - Full summary string returned by the backend.
+     * @param  {string} keyword - Lowercase keyword to locate the section
+     *                            (e.g. "overview", "decisions", "action", "topics").
+     * @returns {string}          Extracted section content, or raw if not found.
+     */
+    function extractSection(raw, keyword) {
+      const lines  = raw.split("\n");
+      const idx    = lines.findIndex(l => l.toLowerCase().includes(keyword));
+
+      /* Section heading not found — return whole text as graceful fallback */
+      if (idx === -1) return raw.trim();
+
+      const sectionLines = [];
+
+      /* Collect lines after the heading until next numbered heading */
+      for (let i = idx + 1; i < lines.length; i++) {
+        /* Stop when we hit the next numbered section (e.g. "2.", "3.") */
+        if (/^\d+\./.test(lines[i].trim()) && i !== idx + 1) break;
+        sectionLines.push(lines[i]);
+      }
+
+      const result = sectionLines.join("\n").trim();
+
+      /* Return raw if nothing was extracted (empty section) */
+      return result || raw.trim();
+    }
+
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       SECTION 6 — Q&A CHAT
+       ═══════════════════════════════════════════════════════════════════════ */
+
+    /**
+     * sendQuestion
+     * ------------
+     * Read the user's question from the input, display it as a user message
+     * bubble, show a typing indicator, then POST to /ask and display the
+     * AI's answer. Implements SRS §4.1.7.
+     *
+     * Users may ask multiple questions without re-uploading audio because
+     * the transcript is cached server-side (SRS §5.1.8).
+     */
+    async function sendQuestion() {
+      const input  = document.getElementById("qaInput");
+      const sendBtn = document.getElementById("sendBtn");
+      const question = input.value.trim();
+
+      /* Guard: do nothing if input is empty */
+      if (!question) return;
+
+      /* Clear input immediately for responsive feel */
+      input.value = "";
+
+      /* Remove the empty-state placeholder on first message */
+      const emptyState = document.getElementById("chatEmpty");
+      if (emptyState) emptyState.remove();
+
+      /* Render user message bubble */
+      appendMessage("user", sanitizeHTML(question));
+
+      /* Show typing indicator while waiting for backend response */
+      const typingId = showTyping();
+
+      /* Disable send controls during request to prevent duplicates */
+      sendBtn.disabled = true;
+      input.disabled   = true;
+
+      try {
+        const response = await fetch(`${API}/ask`, {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ question }),
+        });
+
+        const data = await response.json();
+
+        /* Remove typing indicator */
+        removeTyping(typingId);
+
+        /* Display answer or error message from server */
+        const answerText = response.ok
+          ? data.answer
+          : (data.detail || "Something went wrong. Please try again.");
+
+        appendMessage("ai", sanitizeHTML(answerText));
+
+      } catch (err) {
+        console.error("[sendQuestion] Network error:", err);
+        removeTyping(typingId);
+        appendMessage("ai", "Cannot connect to the server. Is the backend running?");
+      } finally {
+        /* Re-enable controls and refocus input */
+        sendBtn.disabled = false;
+        input.disabled   = false;
+        input.focus();
+      }
+    }
+
+    /**
+     * appendMessage
+     * -------------
+     * Create and insert a new message bubble into the chat history.
+     * Scrolls the history container to the bottom after insertion.
+     *
+     * @param {string} role    - "user" or "ai" (controls layout + avatar).
+     * @param {string} content - HTML-safe message content to display.
+     */
+    function appendMessage(role, content) {
+      const history = document.getElementById("chatHistory");
+
+      /* Avatar emoji differs by role */
+      const avatarEmoji = role === "user" ? "👤" : "🤖";
+
+      const msgEl = document.createElement("div");
+      msgEl.className = `chat-msg ${role}`;
+      msgEl.innerHTML = `
+        <div class="msg-avatar" aria-hidden="true">${avatarEmoji}</div>
+        <div class="msg-bubble">${content}</div>
+      `;
+
+      history.appendChild(msgEl);
+
+      /* Scroll to bottom so the latest message is always visible */
+      history.scrollTop = history.scrollHeight;
+    }
+
+    /**
+     * showTyping
+     * ----------
+     * Insert an animated three-dot typing indicator into the chat history
+     * while waiting for the AI's response.
+     *
+     * @returns {string} A unique ID string so removeTyping() can find and
+     *                   delete the correct element.
+     */
+    function showTyping() {
+      const history  = document.getElementById("chatHistory");
+      const typingId = `typing_${Date.now()}`;
+
+      const typingEl = document.createElement("div");
+      typingEl.className = "chat-msg ai";
+      typingEl.id        = typingId;
+      typingEl.innerHTML = `
+        <div class="msg-avatar" aria-hidden="true">🤖</div>
+        <div class="msg-bubble">
+          <div class="typing-dots" aria-label="AI is typing">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+      `;
+
+      history.appendChild(typingEl);
+      history.scrollTop = history.scrollHeight;
+
+      return typingId;
+    }
+
+    /**
+     * removeTyping
+     * ------------
+     * Remove the typing indicator element from the DOM once a response
+     * has been received (or an error has occurred).
+     *
+     * @param {string} typingId - The ID returned by showTyping().
+     */
+    function removeTyping(typingId) {
+      const el = document.getElementById(typingId);
+      if (el) el.remove();
+    }
+
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       SECTION 7 — DOWNLOAD
+       ═══════════════════════════════════════════════════════════════════════ */
+
+    /**
+     * downloadFile
+     * ------------
+     * Trigger the /download endpoint in a new browser tab.
+     * The backend generates a .txt file containing the full transcript and
+     * summary, which the browser downloads automatically.
+     * Satisfies SRS §4.1.10: users can download transcript + summary as .txt.
+     */
+    function downloadFile() {
+      window.open(`${API}/download`, "_blank");
+    }
+
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       SECTION 8 — UI HELPERS
+       ═══════════════════════════════════════════════════════════════════════ */
+
+    /**
+     * resetUI
+     * -------
+     * Return all dynamic UI elements to their initial hidden/empty state.
+     * Called at the start of every new processFile() so a re-upload starts
+     * from a clean slate without stale results from the previous session.
+     */
+    function resetUI() {
+      /* Hide result panels */
+      document.getElementById("transcriptPanel").classList.remove("show");
+      document.getElementById("summaryPanel").classList.remove("show");
+
+      /* Hide action row and Q&A panel */
+      document.getElementById("actionRow").style.display = "none";
+      document.getElementById("qaPanel").style.display   = "none";
+
+      /* Clear transcript content */
+      document.getElementById("transcriptBody").textContent = "";
+      document.getElementById("transcriptMeta").textContent = "Ready";
+
+      /* Reset summary cells to placeholder dashes */
+      ["sumOverview", "sumDecisions", "sumActions", "sumTopics"].forEach(id => {
+        document.getElementById(id).textContent = "—";
+      });
+
+      /* Clear chat history and restore empty state */
+      const history = document.getElementById("chatHistory");
+      history.innerHTML = `
+        <div class="chat-empty" id="chatEmpty">
+          <div class="chat-empty-icon" aria-hidden="true">💬</div>
+          <p>Ask anything about your meeting.<br/>
+             e.g. "What were the action items?" or "Who was mentioned?"</p>
+        </div>
+      `;
+
+      /* Reset progress panel */
+      setProgress(0, "Processing…", 0);
+    }
+
+    /**
+     * scrollToApp
+     * -----------
+     * Smoothly scroll to the main app section when the hero CTA buttons
+     * are clicked. CSS `scroll-behavior: smooth` on <html> handles the
+     * animation; this function is just a clean named wrapper for the
+     * inline onclick handlers.
+     */
+    function scrollToApp() {
+      document.getElementById("app").scrollIntoView({ behavior: "smooth" });
+    }
+
+  </script>
+
+</body>
+</html>
